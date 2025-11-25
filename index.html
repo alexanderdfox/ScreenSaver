@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RGB Grid Screensaver</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #000000;
+            cursor: none;
+        }
+
+        #gridContainer {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #000000;
+        }
+
+        #binaryGrid {
+            display: grid;
+            gap: 2px;
+            width: 100%;
+            height: 100%;
+        }
+
+        .grid-cell {
+            background: #0a0a0a;
+            border: 1px solid #1a1a1a;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background-color 0.1s ease;
+            position: relative;
+        }
+
+        .grid-cell .cell-text {
+            color: #ffffff;
+            font-family: 'Courier New', monospace;
+            font-weight: bold;
+            font-size: 0.7em;
+            user-select: none;
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+            text-align: center;
+            line-height: 1.2;
+        }
+
+        /* Hide cursor */
+        * {
+            cursor: none !important;
+        }
+    </style>
+</head>
+<body>
+    <div id="gridContainer">
+        <div id="binaryGrid"></div>
+    </div>
+
+    <script>
+        class RGBGridScreensaver {
+            constructor() {
+                this.gridCols = 0;
+                this.gridRows = 0;
+                this.gridData = [];
+                this.gridIndex = 0;
+                this.updateInterval = 0;
+                
+                // Get grid container
+                this.gridContainer = document.getElementById('binaryGrid');
+                
+                // Initialize
+                this.init();
+            }
+
+            init() {
+                // Calculate grid dimensions
+                this.updateGridSize();
+                
+                // Calculate update interval based on screen resolution / 100
+                const screenWidth = window.screen.width;
+                const screenHeight = window.screen.height;
+                const screenResolution = Math.max(screenWidth, screenHeight);
+                this.updateInterval = Math.max(1, Math.floor(screenResolution / 100));
+                
+                // Handle resize
+                window.addEventListener('resize', () => {
+                    this.updateGridSize();
+                    const newWidth = window.innerWidth;
+                    const newHeight = window.innerHeight;
+                    const newResolution = Math.max(newWidth, newHeight);
+                    this.updateInterval = Math.max(1, Math.floor(newResolution / 100));
+                });
+                
+                // Exit on ESC key
+                document.addEventListener('keydown', (e) => {
+                    if (e.key === 'Escape') {
+                        this.exit();
+                    }
+                });
+                
+                // Exit on click (optional)
+                document.addEventListener('click', () => {
+                    this.exit();
+                });
+                
+                // Start updating
+                this.updateGrid();
+            }
+
+            updateGridSize() {
+                const width = window.innerWidth;
+                const height = window.innerHeight;
+                
+                // Calculate optimal cell size (minimum 20px, with 2px gap)
+                const minCellSize = 20;
+                const gap = 2;
+                
+                // Start with a reasonable cell size
+                const targetCellSize = Math.max(minCellSize, Math.min(width, height) / 30);
+                
+                // Calculate maximum columns and rows that fit
+                this.gridCols = Math.floor((width + gap) / (targetCellSize + gap));
+                this.gridRows = Math.floor((height + gap) / (targetCellSize + gap));
+                
+                // Ensure minimum dimensions
+                this.gridCols = Math.max(10, this.gridCols);
+                this.gridRows = Math.max(10, this.gridRows);
+                
+                // Recalculate cell size to fill screen exactly
+                const cellSize = Math.min(
+                    (width - (this.gridCols - 1) * gap) / this.gridCols,
+                    (height - (this.gridRows - 1) * gap) / this.gridRows
+                );
+                
+                // Set grid template
+                this.gridContainer.style.gridTemplateColumns = `repeat(${this.gridCols}, 1fr)`;
+                this.gridContainer.style.gridTemplateRows = `repeat(${this.gridRows}, 1fr)`;
+                
+                // Resize grid data array if dimensions changed
+                const totalCells = this.gridCols * this.gridRows;
+                if (this.gridData.length !== totalCells) {
+                    const oldData = [...this.gridData];
+                    this.gridData = new Array(totalCells).fill(null);
+                    
+                    // Copy old data if possible
+                    if (oldData.length > 0) {
+                        const minCells = Math.min(oldData.length, totalCells);
+                        for (let i = 0; i < minCells; i++) {
+                            this.gridData[i] = oldData[i];
+                        }
+                    }
+                    
+                    // Reset index if grid got smaller
+                    if (this.gridIndex >= totalCells) {
+                        this.gridIndex = totalCells;
+                    }
+                    
+                    // Rebuild grid DOM
+                    this.buildGrid();
+                }
+            }
+
+            buildGrid() {
+                // Clear existing grid
+                this.gridContainer.innerHTML = '';
+                
+                const totalCells = this.gridCols * this.gridRows;
+                
+                for (let i = 0; i < totalCells; i++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'grid-cell';
+                    cell.id = `cell-${i}`;
+                    
+                    // Add text element if cell is large enough
+                    const cellSize = Math.min(
+                        window.innerWidth / this.gridCols,
+                        window.innerHeight / this.gridRows
+                    );
+                    if (cellSize > 15) {
+                        const text = document.createElement('span');
+                        text.className = 'cell-text';
+                        cell.appendChild(text);
+                    }
+                    
+                    this.gridContainer.appendChild(cell);
+                }
+                
+                // Update display with existing data
+                this.updateDisplay();
+            }
+
+            generateRandomRGB() {
+                // Generate random RGB values (0-255 for each channel)
+                return {
+                    r: Math.floor(Math.random() * 256),
+                    g: Math.floor(Math.random() * 256),
+                    b: Math.floor(Math.random() * 256)
+                };
+            }
+
+            rgbToHex(r, g, b) {
+                return "#" + [r, g, b].map(x => {
+                    const hex = x.toString(16);
+                    return hex.length === 1 ? "0" + hex : hex;
+                }).join("");
+            }
+
+            updateGrid() {
+                // Generate new random RGB value
+                const rgbValue = this.generateRandomRGB();
+                
+                const totalCells = this.gridCols * this.gridRows;
+                
+                // Update grid data
+                if (this.gridIndex >= totalCells) {
+                    // Grid is full, shift all values left
+                    for (let i = 0; i < totalCells - 1; i++) {
+                        this.gridData[i] = this.gridData[i + 1];
+                    }
+                    this.gridData[totalCells - 1] = rgbValue;
+                } else {
+                    this.gridData[this.gridIndex] = rgbValue;
+                    this.gridIndex++;
+                }
+                
+                // Update display
+                this.updateDisplay();
+                
+                // Schedule next update
+                setTimeout(() => this.updateGrid(), this.updateInterval);
+            }
+
+            updateDisplay() {
+                const totalCells = this.gridCols * this.gridRows;
+                
+                for (let i = 0; i < totalCells; i++) {
+                    const cell = document.getElementById(`cell-${i}`);
+                    if (!cell) continue;
+                    
+                    if (this.gridData[i] !== null) {
+                        const rgb = this.gridData[i];
+                        const hexColor = this.rgbToHex(rgb.r, rgb.g, rgb.b);
+                        
+                        // Set background color to RGB
+                        cell.style.background = hexColor;
+                        cell.style.borderColor = hexColor;
+                        
+                        // Calculate text color (white or black based on brightness)
+                        const brightness = (rgb.r * 299 + rgb.g * 587 + rgb.b * 114) / 1000;
+                        const textColor = brightness > 128 ? '#000000' : '#ffffff';
+                        
+                        const textElement = cell.querySelector('.cell-text');
+                        if (textElement) {
+                            // Show RGB values or hex code
+                            const cellSize = Math.min(
+                                window.innerWidth / this.gridCols,
+                                window.innerHeight / this.gridRows
+                            );
+                            if (cellSize > 40) {
+                                textElement.textContent = `${rgb.r},${rgb.g},${rgb.b}`;
+                            } else if (cellSize > 25) {
+                                textElement.textContent = hexColor.toUpperCase();
+                            } else {
+                                textElement.textContent = '';
+                            }
+                            textElement.style.color = textColor;
+                        }
+                    } else {
+                        cell.style.background = '#0a0a0a';
+                        cell.style.borderColor = '#1a1a1a';
+                        const textElement = cell.querySelector('.cell-text');
+                        if (textElement) {
+                            textElement.textContent = '';
+                        }
+                    }
+                }
+            }
+
+            exit() {
+                // Exit fullscreen if in fullscreen mode
+                if (document.fullscreenElement) {
+                    document.exitFullscreen();
+                }
+                // Could redirect or close, but for screensaver we'll just stop
+                alert('Press F11 to exit fullscreen, then close the tab.');
+            }
+        }
+
+        // Request fullscreen on load
+        function requestFullscreen() {
+            const elem = document.documentElement;
+            if (elem.requestFullscreen) {
+                elem.requestFullscreen();
+            } else if (elem.webkitRequestFullscreen) {
+                elem.webkitRequestFullscreen();
+            } else if (elem.mozRequestFullScreen) {
+                elem.mozRequestFullScreen();
+            } else if (elem.msRequestFullscreen) {
+                elem.msRequestFullscreen();
+            }
+        }
+
+        // Initialize screensaver when page loads
+        window.addEventListener('load', () => {
+            // Request fullscreen
+            requestFullscreen();
+            
+            // Start screensaver
+            const screensaver = new RGBGridScreensaver();
+            
+            // Make screensaver accessible globally for debugging
+            window.screensaver = screensaver;
+        });
+
+        // Also try fullscreen on any user interaction (some browsers require this)
+        document.addEventListener('click', requestFullscreen, { once: true });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'F11') {
+                e.preventDefault();
+                requestFullscreen();
+            }
+        }, { once: true });
+    </script>
+</body>
+</html>
+
