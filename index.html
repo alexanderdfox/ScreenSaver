@@ -79,11 +79,39 @@
                 // Get grid container
                 this.gridContainer = document.getElementById('binaryGrid');
                 
+                // MIDI setup
+                this.midiAccess = null;
+                this.midiOutput = null;
+                this.midiEnabled = false;
+                
+                // Web Audio API setup (fallback for when MIDI is not available)
+                this.audioContext = null;
+                this.audioEnabled = false;
+                this.currentOscillator = null; // Track current playing oscillator
+                this.currentGainNode = null; // Track current gain node
+                
+                // Track previous colors for each cell to detect changes
+                this.previousCellColors = [];
+                
+                // Color to MIDI note mapping for static colors
+                this.colorToMidiMap = {
+                    '#000000': 36,  // C2 - Black (background and text)
+                    '#0a0a0a': 38,  // D2 - Very dark gray (default cell background)
+                    '#1a1a1a': 40,  // E2 - Dark gray (default cell border)
+                    '#ffffff': 60   // C4 - White (text color)
+                };
+                
                 // Initialize
                 this.init();
             }
 
-            init() {
+            async init() {
+                // Initialize MIDI
+                await this.initMIDI();
+                
+                // Initialize Web Audio API (fallback)
+                this.initAudio();
+                
                 // Calculate grid dimensions
                 this.updateGridSize();
                 
@@ -102,6 +130,23 @@
                     this.updateInterval = Math.max(1, Math.floor(newResolution / 100));
                 });
                 
+                // Resume audio context on first user interaction
+                const resumeAudio = async () => {
+                    if (this.audioContext && this.audioContext.state === 'suspended') {
+                        try {
+                            await this.audioContext.resume();
+                            console.log('Audio context resumed');
+                        } catch (error) {
+                            console.log('Failed to resume audio context:', error);
+                        }
+                    }
+                };
+                
+                // Resume audio on any user interaction
+                document.addEventListener('click', resumeAudio, { once: true });
+                document.addEventListener('keydown', resumeAudio, { once: true });
+                document.addEventListener('touchstart', resumeAudio, { once: true });
+                
                 // Exit on ESC key
                 document.addEventListener('keydown', (e) => {
                     if (e.key === 'Escape') {
@@ -116,6 +161,195 @@
                 
                 // Start updating
                 this.updateGrid();
+            }
+            
+            async initMIDI() {
+                try {
+                    if (navigator.requestMIDIAccess) {
+                        this.midiAccess = await navigator.requestMIDIAccess({ sysex: false });
+                        const outputs = this.midiAccess.outputs.values();
+                        
+                        // Get first available MIDI output
+                        for (const output of outputs) {
+                            this.midiOutput = output;
+                            this.midiEnabled = true;
+                            console.log('MIDI enabled:', output.name);
+                            break;
+                        }
+                        
+                        if (!this.midiEnabled) {
+                            console.log('No MIDI output devices found. Using Web Audio API fallback.');
+                        }
+                    } else {
+                        console.log('Web MIDI API not supported. Using Web Audio API fallback.');
+                    }
+                } catch (error) {
+                    console.log('MIDI initialization failed:', error);
+                }
+            }
+            
+            initAudio() {
+                try {
+                    // Create audio context (works in all modern browsers)
+                    const AudioContext = window.AudioContext || window.webkitAudioContext;
+                    if (AudioContext) {
+                        this.audioContext = new AudioContext();
+                        this.audioEnabled = true;
+                        console.log('Web Audio API enabled, state:', this.audioContext.state);
+                        
+                        // Log state changes
+                        this.audioContext.addEventListener('statechange', () => {
+                            console.log('Audio context state changed to:', this.audioContext.state);
+                        });
+                    } else {
+                        console.log('Web Audio API not supported in this browser.');
+                    }
+                } catch (error) {
+                    console.log('Audio initialization failed:', error);
+                }
+            }
+            
+            midiNoteToFrequency(note) {
+                // Convert MIDI note number to frequency in Hz
+                // A4 (MIDI note 69) = 440 Hz
+                return 440 * Math.pow(2, (note - 69) / 12);
+            }
+            
+            colorToMidiNote(hexColor, rgb = null) {
+                // Check if it's a mapped static color
+                if (this.colorToMidiMap[hexColor.toLowerCase()]) {
+                    return this.colorToMidiMap[hexColor.toLowerCase()];
+                }
+                
+                // For dynamic RGB colors, map based on RGB values
+                // Map RGB values (0-255) to MIDI notes (36-96, which is C2-C7)
+                if (rgb) {
+                    // Use weighted average of RGB channels to determine note
+                    // Red maps to lower notes, Green to middle, Blue to higher
+                    const redNote = 36 + Math.floor((rgb.r / 255) * 12);      // C2-B2 (12 semitones)
+                    const greenNote = 48 + Math.floor((rgb.g / 255) * 12);    // C3-B3 (12 semitones)
+                    const blueNote = 60 + Math.floor((rgb.b / 255) * 12);     // C4-B4 (12 semitones)
+                    
+                    // Return the average note, rounded to nearest integer
+                    const avgNote = Math.round((redNote + greenNote + blueNote) / 3);
+                    // Clamp to valid MIDI range (36-96)
+                    return Math.max(36, Math.min(96, avgNote));
+                }
+                
+                // Fallback: parse hex color if no RGB provided
+                if (hexColor.startsWith('#')) {
+                    const r = parseInt(hexColor.slice(1, 3), 16);
+                    const g = parseInt(hexColor.slice(3, 5), 16);
+                    const b = parseInt(hexColor.slice(5, 7), 16);
+                    const redNote = 36 + Math.floor((r / 255) * 12);
+                    const greenNote = 48 + Math.floor((g / 255) * 12);
+                    const blueNote = 60 + Math.floor((b / 255) * 12);
+                    const avgNote = Math.round((redNote + greenNote + blueNote) / 3);
+                    return Math.max(36, Math.min(96, avgNote));
+                }
+                
+                // Default note if color can't be parsed
+                return 60; // C4
+            }
+            
+            async playMIDINote(note, velocity = 64, duration = 100) {
+                // Try MIDI first if available
+                if (this.midiEnabled && this.midiOutput) {
+                    try {
+                        // Note on (144 = channel 1, note on)
+                        this.midiOutput.send([0x90, note, velocity]);
+                        
+                        // Note off after duration
+                        setTimeout(() => {
+                            if (this.midiOutput) {
+                                this.midiOutput.send([0x80, note, 0]);
+                            }
+                        }, duration);
+                        return;
+                    } catch (error) {
+                        console.log('MIDI note play failed:', error);
+                    }
+                }
+                
+                // Fallback to Web Audio API
+                if (this.audioEnabled && this.audioContext) {
+                    try {
+                        // Resume audio context if suspended (required by some browsers)
+                        if (this.audioContext.state === 'suspended') {
+                            await this.audioContext.resume().catch(err => {
+                                console.log('Could not resume audio context:', err);
+                                return;
+                            });
+                        }
+                        
+                        // Only play if audio context is running
+                        if (this.audioContext.state !== 'running') {
+                            console.log('Audio context not running, state:', this.audioContext.state);
+                            return;
+                        }
+                        
+                        // Stop any currently playing note
+                        if (this.currentOscillator) {
+                            try {
+                                this.currentOscillator.stop();
+                                this.currentOscillator.disconnect();
+                            } catch (e) {
+                                // Oscillator might already be stopped
+                            }
+                            this.currentOscillator = null;
+                        }
+                        if (this.currentGainNode) {
+                            try {
+                                this.currentGainNode.disconnect();
+                            } catch (e) {
+                                // Gain node might already be disconnected
+                            }
+                            this.currentGainNode = null;
+                        }
+                        
+                        const frequency = this.midiNoteToFrequency(note);
+                        const oscillator = this.audioContext.createOscillator();
+                        const gainNode = this.audioContext.createGain();
+                        
+                        // Store references to current oscillator and gain node
+                        this.currentOscillator = oscillator;
+                        this.currentGainNode = gainNode;
+                        
+                        // Connect oscillator to gain node, then to destination
+                        oscillator.connect(gainNode);
+                        gainNode.connect(this.audioContext.destination);
+                        
+                        // Set frequency and wave type
+                        oscillator.frequency.value = frequency;
+                        oscillator.type = 'sine'; // You can change to 'square', 'sawtooth', or 'triangle'
+                        
+                        // Set volume based on velocity (0-127 -> 0-0.4 for audible volume)
+                        const volume = Math.max(0.1, (velocity / 127) * 0.4);
+                        const currentTime = this.audioContext.currentTime;
+                        
+                        // Envelope: fade in quickly, fade out at end
+                        gainNode.gain.setValueAtTime(0, currentTime);
+                        gainNode.gain.linearRampToValueAtTime(volume, currentTime + 0.01);
+                        gainNode.gain.linearRampToValueAtTime(0, currentTime + duration / 1000);
+                        
+                        // Clean up when note finishes
+                        oscillator.onended = () => {
+                            this.currentOscillator = null;
+                            this.currentGainNode = null;
+                        };
+                        
+                        // Start and stop oscillator
+                        oscillator.start(currentTime);
+                        oscillator.stop(currentTime + duration / 1000);
+                    } catch (error) {
+                        console.log('Audio note play failed:', error);
+                        // Clean up on error
+                        this.currentOscillator = null;
+                        this.currentGainNode = null;
+                    }
+                } else {
+                    console.log('Audio not enabled or context not available');
+                }
             }
 
             updateGridSize() {
@@ -220,6 +454,12 @@
                 // Generate new random RGB value
                 const rgbValue = this.generateRandomRGB();
                 
+                // Play MIDI note for the newly added color
+                const hexColor = this.rgbToHex(rgbValue.r, rgbValue.g, rgbValue.b);
+                const midiNote = this.colorToMidiNote(hexColor, rgbValue);
+                const velocity = Math.floor((rgbValue.r + rgbValue.g + rgbValue.b) / 3 / 255 * 127);
+                this.playMIDINote(midiNote, Math.max(1, velocity), 200);
+                
                 const totalCells = this.gridCols * this.gridRows;
                 
                 // Update grid data
@@ -234,7 +474,7 @@
                     this.gridIndex++;
                 }
                 
-                // Update display
+                // Update display (will play MIDI notes for color changes)
                 this.updateDisplay();
                 
                 // Schedule next update
@@ -244,17 +484,33 @@
             updateDisplay() {
                 const totalCells = this.gridCols * this.gridRows;
                 
+                // Initialize previousCellColors array if needed
+                if (this.previousCellColors.length !== totalCells) {
+                    this.previousCellColors = new Array(totalCells).fill(null);
+                }
+                
                 for (let i = 0; i < totalCells; i++) {
                     const cell = document.getElementById(`cell-${i}`);
                     if (!cell) continue;
                     
+                    let currentColor = null;
+                    
                     if (this.gridData[i] !== null) {
                         const rgb = this.gridData[i];
                         const hexColor = this.rgbToHex(rgb.r, rgb.g, rgb.b);
+                        currentColor = hexColor;
                         
                         // Set background color to RGB
                         cell.style.background = hexColor;
                         cell.style.borderColor = hexColor;
+                        
+                        // Check if color has changed
+                        if (this.previousCellColors[i] !== hexColor) {
+                            // Play MIDI note for the color change
+                            const midiNote = this.colorToMidiNote(hexColor, rgb);
+                            const velocity = Math.floor((rgb.r + rgb.g + rgb.b) / 3 / 255 * 127);
+                            this.playMIDINote(midiNote, Math.max(1, velocity), 150);
+                        }
                         
                         // Calculate text color (white or black based on brightness)
                         const brightness = (rgb.r * 299 + rgb.g * 587 + rgb.b * 114) / 1000;
@@ -277,13 +533,26 @@
                             textElement.style.color = textColor;
                         }
                     } else {
-                        cell.style.background = '#0a0a0a';
+                        const defaultBgColor = '#0a0a0a';
+                        currentColor = defaultBgColor;
+                        
+                        // Check if color has changed
+                        if (this.previousCellColors[i] !== defaultBgColor) {
+                            // Play MIDI note for default background color change
+                            const bgMidiNote = this.colorToMidiNote(defaultBgColor);
+                            this.playMIDINote(bgMidiNote, 16, 100); // Quiet note for default background
+                        }
+                        
+                        cell.style.background = defaultBgColor;
                         cell.style.borderColor = '#1a1a1a';
                         const textElement = cell.querySelector('.cell-text');
                         if (textElement) {
                             textElement.textContent = '';
                         }
                     }
+                    
+                    // Update previous color for this cell
+                    this.previousCellColors[i] = currentColor;
                 }
             }
 
