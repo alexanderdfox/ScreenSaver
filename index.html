@@ -115,19 +115,14 @@
                 // Calculate grid dimensions
                 this.updateGridSize();
                 
-                // Calculate update interval based on screen resolution / 100
-                const screenWidth = window.screen.width;
-                const screenHeight = window.screen.height;
-                const screenResolution = Math.max(screenWidth, screenHeight);
-                this.updateInterval = Math.max(1, Math.floor(screenResolution / 100));
+                // 120 BPM = 120 beats per minute = 2 beats per second = 500ms per beat
+                this.updateInterval = 500;
                 
                 // Handle resize
                 window.addEventListener('resize', () => {
                     this.updateGridSize();
-                    const newWidth = window.innerWidth;
-                    const newHeight = window.innerHeight;
-                    const newResolution = Math.max(newWidth, newHeight);
-                    this.updateInterval = Math.max(1, Math.floor(newResolution / 100));
+                    // Keep 120 BPM interval on resize
+                    this.updateInterval = 500;
                 });
                 
                 // Resume audio context on first user interaction
